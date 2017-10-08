@@ -1,0 +1,234 @@
+#include "stm32f4xx.h"                  // Device header
+#include <stdio.h>
+
+volatile uint32_t msTicks;                      /* counts 1ms timeTicks       */
+void SysTick_Handler(void) {
+    msTicks++;
+}
+
+//  Delays number of Systicks (happens every 1 ms)
+static void Delay(__IO uint32_t dlyTicks){
+    uint32_t curTicks = msTicks;
+    while ((msTicks - curTicks) < dlyTicks);
+}
+
+void setSysTick(){
+    // ---------- SysTick timer (1ms) -------- //
+    if (SysTick_Config(SystemCoreClock / 1000)) {
+        // Capture error
+        while (1){};
+    }
+}
+
+uint16_t Read_ADC(void)
+{
+  ADC_RegularChannelConfig(ADC1,ADC_Channel_1,1,ADC_SampleTime_56Cycles);
+	ADC_SoftwareStartConv(ADC1);
+	while(ADC_GetFlagStatus(ADC1,ADC_FLAG_EOC)==RESET);
+	return ADC_GetConversionValue(ADC1);
+}	
+int main()
+{
+	setSysTick();
+	
+	
+	GPIO_InitTypeDef         GPIO_InitStructure;
+	TIM_TimeBaseInitTypeDef  TIM_TimeBaseStructure;
+	NVIC_InitTypeDef         NVIC_InitStructure; // interruptlari düzenleyen conf. ayarlari
+	ADC_InitTypeDef          ADC_InitStructure;
+	ADC_CommonInitTypeDef    ADC_CommonInitStructure;
+	EXTI_InitTypeDef         EXTI_InitStructure;
+	
+	RCC_AHB1PeriphClockCmd(RCC_AHB1Periph_GPIOD,ENABLE);
+	RCC_APB1PeriphClockCmd(RCC_APB1Periph_TIM2,ENABLE);
+	RCC_APB1PeriphClockCmd(RCC_APB1Periph_TIM4, ENABLE);
+	RCC_AHB1PeriphClockCmd(RCC_AHB1Periph_GPIOA,ENABLE);
+	RCC_APB2PeriphClockCmd(RCC_APB2Periph_ADC1,ENABLE);
+	RCC_APB2PeriphClockCmd(RCC_APB2Periph_SYSCFG, ENABLE);
+	
+	GPIO_InitStructure.GPIO_Mode=GPIO_Mode_OUT;
+	GPIO_InitStructure.GPIO_Pin=GPIO_Pin_9 | GPIO_Pin_10 | GPIO_Pin_11 | GPIO_Pin_12 | GPIO_Pin_13 | GPIO_Pin_14 | GPIO_Pin_15 ;
+	GPIO_InitStructure.GPIO_OType=GPIO_OType_PP;
+	GPIO_InitStructure.GPIO_Speed=GPIO_Speed_100MHz;
+	GPIO_Init(GPIOD,&GPIO_InitStructure);
+	
+	GPIO_InitStructure.GPIO_Mode=GPIO_Mode_AN;
+	GPIO_InitStructure.GPIO_Pin=GPIO_Pin_0;
+	GPIO_InitStructure.GPIO_OType=GPIO_OType_PP;
+	GPIO_InitStructure.GPIO_PuPd=GPIO_PuPd_NOPULL;	
+	GPIO_Init(GPIOA,&GPIO_InitStructure);
+	
+	GPIO_InitStructure.GPIO_Mode=GPIO_Mode_AN;
+	GPIO_InitStructure.GPIO_Pin=GPIO_Pin_1;
+	GPIO_InitStructure.GPIO_OType=GPIO_OType_PP;
+	GPIO_InitStructure.GPIO_PuPd=GPIO_PuPd_NOPULL;	
+	GPIO_Init(GPIOA,&GPIO_InitStructure);
+	
+	ADC_CommonInitStructure.ADC_Mode=ADC_Mode_Independent;
+	ADC_CommonInitStructure.ADC_Prescaler=ADC_Prescaler_Div4; // Kristal hizinin 1/4ü kadar
+	ADC_CommonInit(&ADC_CommonInitStructure);
+	
+	ADC_InitStructure.ADC_Resolution=ADC_Resolution_8b;
+	ADC_Init(ADC1,&ADC_InitStructure);
+	
+	ADC_Cmd(ADC1,ENABLE);
+//	ADC_ITConfig(ADC1,ADC_IT_EOC,ENABLE);
+	
+ /* Connect EXTI Line0 to PA0 pin (i.e. EXTI0CR[0]) Tell system that you will use PA0 for EXTI_Line0 */
+  SYSCFG_EXTILineConfig(EXTI_PortSourceGPIOA, EXTI_PinSource0);
+  // SYSCFG->EXTICR[0] &= SYSCFG_EXTICR1_EXTI0_PA;		// Same as above, but with direct register access
+	
+	TIM_TimeBaseStructure.TIM_Prescaler          =8399; //+1den baslar isleme
+	TIM_TimeBaseStructure.TIM_CounterMode        = TIM_CounterMode_Up;// counterin aldigi input sayisini sayar
+	TIM_TimeBaseStructure.TIM_Period             =9999;
+	TIM_TimeBaseStructure.TIM_ClockDivision      =TIM_CKD_DIV4; //Cloccku kaça bölmesi gerektigini söyler.
+	TIM_TimeBaseStructure.TIM_RepetitionCounter  =50;
+	TIM_TimeBaseInit(TIM2,&TIM_TimeBaseStructure);
+	TIM_Cmd(TIM2,ENABLE);
+	TIM_ITConfig(TIM2,TIM_IT_Update,ENABLE);
+	
+	TIM_TimeBaseStructure.TIM_Prescaler          =8399; //+1den baslar isleme
+	TIM_TimeBaseStructure.TIM_CounterMode        = TIM_CounterMode_Up;// counterin aldigi input sayisini sayar
+	TIM_TimeBaseStructure.TIM_Period             =4999;
+  TIM_TimeBaseStructure.TIM_ClockDivision      =TIM_CKD_DIV4; //Cloccku kaça bölmesi gerektigini söyler.
+  TIM_TimeBaseStructure.TIM_RepetitionCounter  =50;
+  TIM_TimeBaseInit(TIM4, &TIM_TimeBaseStructure);
+  TIM_Cmd(TIM4, ENABLE);
+	TIM_ITConfig(TIM4,TIM_IT_Update,ENABLE);
+	
+	/* Configure EXTI Line0 */
+  EXTI_InitStructure.EXTI_Line = EXTI_Line0;              // PA0 is connected to EXTI0
+  EXTI_InitStructure.EXTI_Mode = EXTI_Mode_Interrupt;     // Interrupt mode
+  EXTI_InitStructure.EXTI_Trigger = EXTI_Trigger_Rising; 	// Trigger on Rising edge (Just as user presses btn),rising, falling or rising_falling
+  EXTI_InitStructure.EXTI_LineCmd = ENABLE;               // Enable the interrupt
+  EXTI_Init(&EXTI_InitStructure);                         // Initialize EXTI
+		
+	 /* Enable and set priorities for the EXTI0 in NVIC */
+  NVIC_InitStructure.NVIC_IRQChannel                     =EXTI0_IRQn; // Function name for EXTI_Line0 interrupt handler
+  NVIC_InitStructure.NVIC_IRQChannelPreemptionPriority   = 0x00;     // Set priority
+  NVIC_InitStructure.NVIC_IRQChannelSubPriority          = 0x00;     // Set sub priority
+  NVIC_InitStructure.NVIC_IRQChannelCmd                  = ENABLE;   // Enable the interrupt
+  NVIC_Init(&NVIC_InitStructure);                                    // Add to NVIC
+	
+//	NVIC_InitStructure.NVIC_IRQChannel                     = TIM4_IRQn; // Hangi interrupt kaynagi conf.
+//	NVIC_InitStructure.NVIC_IRQChannelPreemptionPriority   = 0x01;
+//	NVIC_InitStructure.NVIC_IRQChannelSubPriority          = 0x00;
+//	NVIC_InitStructure.NVIC_IRQChannelCmd                  = ENABLE;
+//  NVIC_Init(&NVIC_InitStructure);
+//	
+//	NVIC_InitStructure.NVIC_IRQChannel                     = TIM2_IRQn; // Hangi interrupt kaynagi conf.
+//	NVIC_InitStructure.NVIC_IRQChannelPreemptionPriority   = 0x00;
+//	NVIC_InitStructure.NVIC_IRQChannelSubPriority          = 0x01;
+//	NVIC_InitStructure.NVIC_IRQChannelCmd                  = ENABLE;
+//  NVIC_Init(&NVIC_InitStructure);
+	/*    
+    TIM4 is connected to APB1 bus, which has on F407 device 42MHz clock                 
+    But, timer has internal PLL, which double this frequency for timer, up to 84MHz     
+    Remember: Not each timer is connected to APB1, there are also timers connected     
+    on APB2, which works at 84MHz by default, and internal PLL increase                 
+    this to up to 168MHz                                                             
+    
+    Set timer prescaller 
+    Timer count frequency is set with 
+    
+    timer_tick_frequency = Timer_default_frequency / (prescaller_set + 1)    10k  
+    
+    In our case, we want a max frequency for timer, so we set prescaller to 0         
+    And our timer will have tick frequency        
+   
+      (Period) * (Prescaler)
+sn   = ----------------------
+      (Clock Speed)
+    timer_tick_frequency = 84000000 / (0 + 1) = 84000000 
+*/ 
+/*
+    Set timer period when it have reset
+    First you have to know max value for timer
+    In our case it is 16bit = 65535
+    To get your frequency for PWM, equation is simple
+    
+    PWM_frequency = timer_tick_frequency / (TIM_Period + 1)
+    
+    If you know your PWM frequency you want to have timer period set correct
+    
+    TIM_Period = timer_tick_frequency / PWM_frequency - 1
+    
+    In our case, for 10Khz PWM_frequency, set Period to
+    
+    TIM_Period = 84000000 / 10000 - 1 = 8399
+    
+    If you get TIM_Period larger than max timer value (in our case 65535),
+    you have to choose larger prescaler and slow down timer tick frequency
+*/
+GPIO_SetBits(GPIOD, GPIO_Pin_10);
+		
+ while(1)
+ {
+
+ } 
+	
+}
+
+void TIM2_IRQHandler()
+{
+	if(TIM_GetITStatus(TIM2,TIM_IT_Update)!=RESET)
+	{
+		TIM_ClearITPendingBit(TIM2,TIM_IT_Update);
+		GPIO_ToggleBits(GPIOD,GPIO_Pin_12 );
+	}
+}	
+void TIM4_IRQHandler()
+{
+  if(TIM_GetITStatus(TIM4,TIM_IT_Update)!=RESET)
+	{
+		uint16_t adc_data; //12 bitlik adc verisini saklar
+	  TIM_ClearITPendingBit(TIM4,TIM_IT_Update);
+	
+		adc_data=Read_ADC();
+		if(adc_data<51)
+		{
+		
+		GPIO_ResetBits(GPIOD,GPIO_Pin_13);
+		GPIO_ResetBits(GPIOD,GPIO_Pin_14);
+    GPIO_ResetBits(GPIOD,GPIO_Pin_15);			
+		}	
+		else if(50<adc_data && adc_data<101)
+		{
+		
+		GPIO_ResetBits(GPIOD,GPIO_Pin_13);
+		GPIO_ResetBits(GPIOD,GPIO_Pin_14);
+    GPIO_ResetBits(GPIOD,GPIO_Pin_15);			
+		}	
+		else if(100<adc_data && adc_data<151)
+		{
+		
+		GPIO_SetBits(GPIOD,GPIO_Pin_13);
+		GPIO_ResetBits(GPIOD,GPIO_Pin_14);
+    GPIO_ResetBits(GPIOD,GPIO_Pin_15);			
+		}	
+	 else if(150<adc_data && adc_data<201)
+		{
+		
+		GPIO_SetBits(GPIOD,GPIO_Pin_13);
+		GPIO_SetBits(GPIOD,GPIO_Pin_14);
+    GPIO_ResetBits(GPIOD,GPIO_Pin_15);			
+		}	
+		else
+		{
+		
+		GPIO_SetBits(GPIOD,GPIO_Pin_13);
+		GPIO_SetBits(GPIOD,GPIO_Pin_14);
+    GPIO_SetBits(GPIOD,GPIO_Pin_15);			
+		}	
+		
+	}
+}
+void EXTI0_IRQHandler(void) {
+    // Make sure the interrupt flag is set for EXTI0
+    if(EXTI_GetITStatus(EXTI_Line0) != RESET){
+        GPIO_ToggleBits(GPIOD, GPIO_Pin_10);
+        
+        // Clear the interrupt flag
+        EXTI_ClearITPendingBit(EXTI_Line0);
+    }
+}
